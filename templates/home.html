@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interview Scheduler</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="page-shell auth-shell">
+        <section class="hero-panel">
+            <div class="eyebrow">Interview Scheduler</div>
+            <h1>Schedule interviews, run the session, and review the score in one place.</h1>
+            <p>
+                Create an admin account, log in, schedule candidates, and see an overall interview percentage after completion.
+            </p>
+
+            <div class="hero-actions">
+                <button type="button" class="hero-action" data-open-auth="login">Login</button>
+                <button type="button" class="hero-action hero-action-secondary" data-open-auth="register">Register</button>
+            </div>
+
+            <div class="hero-points">
+                <div class="hero-point">Admin login and registration</div>
+                <div class="hero-point">Interview scheduling portal</div>
+                <div class="hero-point">Post-interview scoring dashboard</div>
+            </div>
+        </section>
+
+        <section class="auth-grid">
+            <div class="glass-card auth-card auth-panel" id="loginPanel" hidden>
+                <div class="auth-head">
+                    <h2>Admin Login</h2>
+                    <button type="button" class="close-auth" data-close-auth>&times;</button>
+                </div>
+                {% if error and active_form == 'login' %}
+                    <div class="notice notice-error">{{ error }}</div>
+                {% endif %}
+                <form method="POST" action="{{ url_for('login') }}">
+                    <div class="form-group">
+                        <label for="login-username">Username</label>
+                        <input type="text" id="login-username" name="username" placeholder="admin" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">Password</label>
+                        <input type="password" id="login-password" name="password" placeholder="••••••••" required>
+                    </div>
+                    <button type="submit">Login</button>
+                </form>
+            </div>
+
+            <div class="glass-card auth-card auth-panel" id="registerPanel" hidden>
+                <div class="auth-head">
+                    <h2>Create Admin Account</h2>
+                    <button type="button" class="close-auth" data-close-auth>&times;</button>
+                </div>
+                {% if error and active_form == 'register' %}
+                    <div class="notice notice-error">{{ error }}</div>
+                {% endif %}
+                <form method="POST" action="{{ url_for('register') }}">
+                    <div class="form-group">
+                        <label for="register-username">Username</label>
+                        <input type="text" id="register-username" name="username" placeholder="admin" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="register-password">Password</label>
+                        <input type="password" id="register-password" name="password" placeholder="Create a strong password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="register-confirm">Confirm Password</label>
+                        <input type="password" id="register-confirm" name="confirm_password" placeholder="Repeat password" required>
+                    </div>
+                    <button type="submit">Register</button>
+                </form>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const panels = {
+            login: document.getElementById('loginPanel'),
+            register: document.getElementById('registerPanel'),
+        };
+
+        function openPanel(name) {
+            Object.values(panels).forEach(panel => {
+                if (panel) {
+                    panel.hidden = true;
+                }
+            });
+            if (panels[name]) {
+                panels[name].hidden = false;
+            }
+        }
+
+        document.querySelectorAll('[data-open-auth]').forEach(button => {
+            button.addEventListener('click', () => openPanel(button.dataset.openAuth));
+        });
+
+        document.querySelectorAll('[data-close-auth]').forEach(button => {
+            button.addEventListener('click', () => {
+                Object.values(panels).forEach(panel => panel.hidden = true);
+            });
+        });
+
+        const activeForm = {{ active_form | default(None) | tojson }};
+        if (activeForm) {
+            openPanel(activeForm);
+        }
+    </script>
+</body>
+</html>

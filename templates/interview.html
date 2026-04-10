@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Interview Room</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+    <script>
+        window.INTERVIEW_TOKEN = {{ token | tojson }};
+        window.CANDIDATE_NAME = {{ name | tojson }};
+        window.INTERVIEW_TIME = {{ interview_time | tojson }};
+    </script>
+</head>
+<body>
+    <div class="compatibility-overlay" id="compatibilityOverlay">
+        <div class="compatibility-card glass-card">
+            <div class="eyebrow">Compatibility Check</div>
+            <h1>Prepare your system for the interview</h1>
+            <p>
+                Complete every required test before entering the interview panel.
+                Please allow all permissions when prompted.
+            </p>
+
+            <div class="progress-shell">
+                <div class="progress-header">
+                    <span>Completion</span>
+                    <strong id="compatPercent">0%</strong>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="compatProgress"></div>
+                </div>
+            </div>
+
+            <div class="compatibility-list">
+                <div class="compat-item">
+                    <span>System Compatibility</span>
+                    <strong id="checkSystem">Pending</strong>
+                </div>
+                <div class="compat-item">
+                    <span>Microphone</span>
+                    <strong id="checkMic">Pending</strong>
+                    <div class="mic-meter" id="micMeter"></div>
+                </div>
+                <div class="compat-item">
+                    <span>Webcam</span>
+                    <strong id="checkCamera">Pending</strong>
+                </div>
+                <div class="compat-item">
+                    <span>Screen Share</span>
+                    <strong id="checkScreen">Pending</strong>
+                </div>
+                <div class="compat-item">
+                    <span>Internet / Latency</span>
+                    <strong id="checkInternet">Pending</strong>
+                </div>
+                <div class="compat-item">
+                    <span>Browser Compatibility</span>
+                    <strong id="checkBrowser">Pending</strong>
+                </div>
+                <div class="compat-item">
+                    <span>Fullscreen Ready</span>
+                    <strong id="checkFullscreen">Pending</strong>
+                </div>
+            </div>
+
+            <div class="compat-actions">
+                <button type="button" id="runCompatBtn">Run All Tests</button>
+                <button type="button" id="shareCompatBtn" class="btn-secondary">Share Screen</button>
+                <button type="button" id="continueCompatBtn" class="btn-secondary" disabled>Proceed to Interview</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="page-shell interview-shell" id="interviewShell" hidden>
+        <header class="dashboard-header">
+            <div>
+                <div class="eyebrow">Candidate Session</div>
+                <h1>Interview with AI - {{ name }}</h1>
+                <p>Scheduled for {{ interview_time }}</p>
+            </div>
+            <div class="header-actions">
+                <a class="ghost-link" href="/">Exit</a>
+            </div>
+        </header>
+
+        <div class="warning-banner" id="warningBanner" hidden></div>
+
+        <div class="interview-grid">
+            <div class="video-container">
+                <video id="webcam" autoplay playsinline muted></video>
+                <video id="screenPreview" autoplay playsinline muted class="screen-preview" hidden></video>
+                <div id="camStatus" class="status-badge status-on">CAM ON</div>
+                <div id="screenStatus" class="status-badge status-off" style="top: 3rem;">SCREEN OFF</div>
+                <div id="micStatus" class="status-badge status-on" style="top: 5rem;">MIC ON</div>
+            </div>
+
+            <div class="glass-card chat-box">
+                <div class="messages" id="chatMessages">
+                    <div class="message msg-ai">Waiting for you to start the interview...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button id="shareBtn" style="width:auto; padding:1rem 3rem; background:#14b8a6;">SHARE ENTIRE SCREEN</button>
+            <button id="startBtn" style="width:auto; padding:1rem 3rem;">START INTERVIEW</button>
+            <button id="listenBtn" style="display:none; width:auto; background:#10b981;">
+                <i class="fas fa-microphone"></i> SPEAK NOW
+            </button>
+            <button id="endBtn" class="btn-red" style="display:none; width:auto;">END INTERVIEW</button>
+        </div>
+
+        <div class="screen-note glass-card">
+            <strong>Screen share required:</strong> The interview panel will stay locked until every compatibility test passes and fullscreen is enabled.
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/interview.js') }}"></script>
+</body>
+</html>

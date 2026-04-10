@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interview Review</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="page-shell dashboard-shell">
+        <header class="dashboard-header">
+            <div>
+                <div class="eyebrow">Interview Review</div>
+                <h1>{{ interview['candidate_name'] }}</h1>
+                <p>{{ interview['candidate_email'] }} | {{ interview['interview_time'] }}</p>
+            </div>
+            <div class="header-actions">
+                <a class="ghost-link" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+            </div>
+        </header>
+
+        <section class="metrics-grid">
+            <div class="metric-card">
+                <span>Status</span>
+                <strong>{{ interview['status'].replace('_', ' ') }}</strong>
+            </div>
+            <div class="metric-card">
+                <span>Score</span>
+                <strong>{{ interview['score'] if interview['score'] is not none else '-' }}{% if interview['score'] is not none %}%{% endif %}</strong>
+            </div>
+            <div class="metric-card">
+                <span>Duration</span>
+                <strong>{{ interview['duration_minutes'] if interview['duration_minutes'] is not none else '-' }}</strong>
+            </div>
+            <div class="metric-card">
+                <span>Completed</span>
+                <strong>{{ interview['completed_at'] if interview['completed_at'] else '-' }}</strong>
+            </div>
+        </section>
+
+        <section class="dashboard-grid">
+            <div class="glass-card">
+                <h2>Evaluation Summary</h2>
+                {% if interview['feedback'] %}
+                    <p>{{ evaluation.summary if evaluation and evaluation.summary else interview['feedback'] }}</p>
+                    {% if evaluation and evaluation.strengths %}
+                    <div class="detail-list">
+                        <h3>Strengths</h3>
+                        <ul>
+                            {% for item in evaluation.strengths %}
+                            <li>{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                    {% if evaluation and evaluation.concerns %}
+                    <div class="detail-list">
+                        <h3>Concerns</h3>
+                        <ul>
+                            {% for item in evaluation.concerns %}
+                            <li>{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <p>This interview has not been scored yet.</p>
+                {% endif %}
+            </div>
+
+            <div class="glass-card">
+                <h2>Transcript</h2>
+                <pre class="transcript-box">{{ transcript_text or 'No transcript available yet.' }}</pre>
+            </div>
+        </section>
+
+        <section class="dashboard-grid" style="margin-top: 20px;">
+            <div class="glass-card">
+                <h2>Compatibility Checks</h2>
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Check</th>
+                                <th>Status</th>
+                                <th>Details</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in compatibility_checks %}
+                            <tr>
+                                <td>{{ item['check_name'] }}</td>
+                                <td><span class="status-pill status-{{ item['status']|lower }}">{{ item['status'] }}</span></td>
+                                <td class="muted">{{ item['details'] or '-' }}</td>
+                                <td class="muted">{{ item['created_at'] }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% if compatibility_checks|length == 0 %}
+                            <tr>
+                                <td colspan="4" class="empty-state">No compatibility checks logged yet.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <h2>Security Events</h2>
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Event</th>
+                                <th>Details</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in proctoring_events %}
+                            <tr>
+                                <td>{{ item['event_type'] }}</td>
+                                <td class="muted">{{ item['details'] or '-' }}</td>
+                                <td class="muted">{{ item['created_at'] }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% if proctoring_events|length == 0 %}
+                            <tr>
+                                <td colspan="3" class="empty-state">No security events logged yet.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+</body>
+</html>

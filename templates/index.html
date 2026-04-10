@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Interview Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>AI Interview Recruiter Dashboard</h1>
+        
+        <div class="glass-card">
+            <h2 style="margin-top:0">Schedule New Interview</h2>
+            <form id="scheduleForm">
+                <div class="form-group">
+                    <label for="name">Candidate Name</label>
+                    <input type="text" id="name" name="name" placeholder="John Doe" required>
+                </div>
+                <div class="form-group">
+                    <label for="email">Candidate Email</label>
+                    <input type="email" id="email" name="email" placeholder="john@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="time">Interview Time</label>
+                    <input type="datetime-local" id="time" name="time" required>
+                </div>
+                <button type="submit">Schedule & Send Invitation</button>
+            </form>
+            
+            <div id="result" style="margin-top: 2rem; display: none;" class="glass-card">
+                <p id="msg"></p>
+                <div class="form-group">
+                    <label>Interview Link (Manual Copy)</label>
+                    <input type="text" id="link" readonly>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('scheduleForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const btn = e.target.querySelector('button');
+            btn.disabled = true;
+            btn.innerText = 'Scheduling...';
+
+            try {
+                const response = await fetch('/schedule', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                document.getElementById('result').style.display = 'block';
+                const emailNote = data.email_status === 'sent'
+                    ? ' (Email sent!)'
+                    : data.email_status === 'skipped'
+                        ? ' (Email skipped because SMTP is not configured)'
+                        : ' (Email delivery failed)';
+                document.getElementById('msg').innerText = data.message + emailNote;
+                document.getElementById('link').value = data.link;
+            } catch (err) {
+                alert('Error: ' + err);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Schedule & Send Invitation';
+            }
+        };
+    </script>
+</body>
+</html>

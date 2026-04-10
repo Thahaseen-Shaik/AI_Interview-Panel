@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interview Scheduler Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="page-shell dashboard-shell">
+        <header class="dashboard-header">
+            <div>
+                <div class="eyebrow">Interview Scheduler</div>
+                <h1>Welcome, {{ admin_username }}</h1>
+                <p>Schedule interviews and track the completed candidate score from this portal.</p>
+            </div>
+            <div class="header-actions">
+                <a class="ghost-link" href="{{ url_for('logout') }}">Logout</a>
+            </div>
+        </header>
+
+        <section class="metrics-grid">
+            <div class="metric-card">
+                <span>Total Interviews</span>
+                <strong>{{ total_interviews }}</strong>
+            </div>
+            <div class="metric-card">
+                <span>Scheduled</span>
+                <strong>{{ scheduled_interviews }}</strong>
+            </div>
+            <div class="metric-card">
+                <span>In Progress</span>
+                <strong>{{ in_progress_interviews }}</strong>
+            </div>
+            <div class="metric-card">
+                <span>Completed</span>
+                <strong>{{ completed_interviews }}</strong>
+            </div>
+            <div class="metric-card">
+                <span>Average Score</span>
+                <strong>{{ average_score if average_score is not none else '-' }}</strong>
+            </div>
+        </section>
+
+        <section class="dashboard-grid">
+            <div class="glass-card">
+                <h2>Schedule New Interview</h2>
+                <form id="scheduleForm">
+                    <div class="form-group">
+                        <label for="name">Candidate Name</label>
+                        <input type="text" id="name" name="name" placeholder="John Doe" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Candidate Email</label>
+                        <input type="email" id="email" name="email" placeholder="john@example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="time">Interview Time</label>
+                        <input type="datetime-local" id="time" name="time" required>
+                    </div>
+                    <button type="submit">Schedule Interview</button>
+                </form>
+
+                <div id="result" class="result-box" style="display:none;">
+                    <p id="msg"></p>
+                    <div class="form-group">
+                        <label for="link">Interview Link</label>
+                        <input type="text" id="link" readonly>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <h2>Candidate Scores</h2>
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Candidate</th>
+                                <th>Time</th>
+                                <th>Status</th>
+                                <th>Score</th>
+                                <th>Review</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for interview in interviews %}
+                            <tr>
+                                <td>
+                                    <strong>{{ interview['candidate_name'] }}</strong>
+                                    <div class="muted">{{ interview['candidate_email'] }}</div>
+                                </td>
+                                <td>{{ interview['interview_time'] }}</td>
+                                <td>
+                                    <span class="status-pill status-{{ interview['status'] }}">{{ interview['status'].replace('_', ' ') }}</span>
+                                </td>
+                                <td>
+                                    {% if interview['score'] is not none %}
+                                        <span class="score-pill">{{ interview['score'] }}%</span>
+                                    {% else %}
+                                        <span class="muted">Pending</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a class="ghost-link" href="{{ url_for('interview_detail', token=interview['token']) }}">Open</a>
+                                    <button
+                                        type="button"
+                                        class="ghost-link danger-link"
+                                        data-delete-interview="{{ interview['token'] }}"
+                                        style="margin-top: 10px; width: 120px;"
+                                    >
+                                        Delete
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            {% if interviews|length == 0 %}
+                            <tr>
+                                <td colspan="5" class="empty-state">No interviews scheduled yet.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        async function deleteInterview(token, button) {
+            const confirmed = confirm('Delete this interview permanently? This will remove the transcript and score too.');
+            if (!confirmed) {
+                return;
+            }
+
+            button.disabled = true;
+            button.innerText = 'Deleting...';
+
+            try {
+                const response = await fetch(`{{ url_for("interview_delete", token="__TOKEN__") }}`.replace('__TOKEN__', token), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    throw new Error(data.error || 'Failed to delete interview');
+                }
+
+                window.location.reload();
+            } catch (error) {
+                alert(error.message || error);
+                button.disabled = false;
+                button.innerText = 'Delete';
+            }
+        }
+
+        const form = document.getElementById('scheduleForm');
+        form.onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(form);
+            const button = form.querySelector('button');
+            button.disabled = true;
+            button.innerText = 'Scheduling...';
+
+            try {
+                const response = await fetch('{{ url_for("schedule") }}', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                document.getElementById('result').style.display = 'block';
+                const note = data.email_status === 'sent'
+                    ? ' (Email sent)'
+                    : data.email_status === 'skipped'
+                        ? ' (Email skipped because SMTP is not configured)'
+                        : ' (Email delivery failed)';
+                document.getElementById('msg').innerText = data.message + note;
+                document.getElementById('link').value = data.link;
+            } catch (error) {
+                alert('Error: ' + error);
+            } finally {
+                button.disabled = false;
+                button.innerText = 'Schedule Interview';
+            }
+        };
+
+        document.querySelectorAll('[data-delete-interview]').forEach((button) => {
+            button.addEventListener('click', () => deleteInterview(button.dataset.deleteInterview, button));
+        });
+    </script>
+</body>
+</html>
