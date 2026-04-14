@@ -80,6 +80,11 @@
         <section class="dashboard-grid" style="margin-top: 20px;">
             <div class="glass-card">
                 <h2>Compatibility Checks</h2>
+                <div class="batch-summary" style="margin-bottom: 16px;">
+                    <strong>{{ compatibility_summary.passed }}</strong> passed,
+                    <strong>{{ compatibility_summary.failed }}</strong> failed,
+                    <strong>{{ compatibility_summary.pending }}</strong> pending
+                </div>
                 <div class="table-wrap">
                     <table class="data-table">
                         <thead>
@@ -93,15 +98,15 @@
                         <tbody>
                             {% for item in compatibility_checks %}
                             <tr>
-                                <td>{{ item['check_name'] }}</td>
-                                <td><span class="status-pill status-{{ item['status']|lower }}">{{ item['status'] }}</span></td>
+                                <td>{{ item['check_name']|replace('_', ' ')|title }}</td>
+                                <td><span class="status-pill status-{{ item['status']|lower }}">{{ item['status']|title }}</span></td>
                                 <td class="muted">{{ item['details'] or '-' }}</td>
                                 <td class="muted">{{ item['created_at'] }}</td>
                             </tr>
                             {% endfor %}
                             {% if compatibility_checks|length == 0 %}
                             <tr>
-                                <td colspan="4" class="empty-state">No compatibility checks logged yet.</td>
+                                <td colspan="4" class="empty-state">No compatibility checks logged yet. Ask the candidate to run the system check page before joining.</td>
                             </tr>
                             {% endif %}
                         </tbody>

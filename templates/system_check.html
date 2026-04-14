@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Compatibility Check</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        window.INTERVIEW_TOKEN = {{ token | tojson }};
+        window.INTERVIEW_TIME = {{ interview_time | tojson }};
+        window.WAITING_URL = {{ waiting_url | tojson }};
+        window.ENTER_URL = {{ enter_url | tojson }};
+        window.SECONDS_UNTIL_START = {{ seconds_until_start | tojson }};
+    </script>
+</head>
+<body>
+    <div class="page-shell waiting-shell">
+        <header class="dashboard-header">
+            <div>
+                <div class="eyebrow">System Compatibility Check</div>
+                <h1>{{ name }}</h1>
+                <p>Interview scheduled for {{ interview_time }}.</p>
+            </div>
+            <div class="header-actions">
+                <a class="ghost-link" href="{{ waiting_url }}">Back to Interview</a>
+            </div>
+        </header>
+
+        <section class="waiting-banner glass-card">
+            <div class="waiting-copy">
+                <h2 id="compatTitle">System Compatibility Check</h2>
+                <p id="compatMessage">Verify microphone, speaker, camera, and internet/browser before the interview begins.</p>
+            </div>
+            <div class="countdown-card">
+                <span>Starts in</span>
+                <strong id="countdownText">{{ seconds_until_start }}s</strong>
+            </div>
+        </section>
+
+        <section class="compatibility-grid system-check-grid">
+            <div class="glass-card">
+                <h2>Compatibility Status</h2>
+                <div class="progress-shell">
+                    <div class="progress-header">
+                        <span>Completion</span>
+                        <strong id="compatPercent">0%</strong>
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-fill" id="compatProgress"></div>
+                    </div>
+                </div>
+
+                <div class="compatibility-list system-check-list">
+                    <div class="compat-item">
+                        <span>System Status</span>
+                        <strong id="systemStatus">Ready</strong>
+                    </div>
+                    <div class="compat-item">
+                        <span>Microphone</span>
+                        <strong id="micStatus">Pending</strong>
+                        <div class="mic-meter" id="micMeter"></div>
+                    </div>
+                    <div class="compat-item">
+                        <span>Speaker</span>
+                        <strong id="speakerStatus">Pending</strong>
+                    </div>
+                    <div class="compat-item">
+                        <span>Webcam</span>
+                        <strong id="cameraStatus">Pending</strong>
+                    </div>
+                    <div class="compat-item">
+                        <span>Internet / Browser</span>
+                        <strong id="internetStatus">Pending</strong>
+                    </div>
+                </div>
+
+                <div class="compat-actions">
+                    <button type="button" id="micTestBtn">Test Microphone</button>
+                    <button type="button" id="speakerTestBtn" class="btn-secondary">Test Speaker</button>
+                    <a class="button-link secondary-link" href="{{ waiting_url }}">Back to Interview</a>
+                </div>
+
+                <div class="speaker-confirm" id="speakerConfirmWrap" hidden>
+                    <p>Did you hear the sample audio?</p>
+                    <button type="button" id="speakerYesBtn">Yes, it worked</button>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <h2>Webcam Preview</h2>
+                <div class="video-container system-preview">
+                    <video id="cameraPreview" autoplay playsinline muted></video>
+                </div>
+                <div class="screen-note glass-card" style="margin-top: 18px;">
+                    <strong>Tip:</strong> Allow camera and microphone permissions when prompted so every test can pass.
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/system_check.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/waiting.js') }}"></script>
+</body>
+</html>

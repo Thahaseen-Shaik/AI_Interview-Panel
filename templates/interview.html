@@ -13,69 +13,69 @@
         window.INTERVIEW_TOKEN = {{ token | tojson }};
         window.CANDIDATE_NAME = {{ name | tojson }};
         window.INTERVIEW_TIME = {{ interview_time | tojson }};
+        window.IS_WAITING = {{ is_waiting | tojson }};
+        window.SECONDS_UNTIL_START = {{ seconds_until_start | tojson }};
+        window.ENTRY_MODE = {{ entry_mode | default('compat') | tojson }};
     </script>
 </head>
 <body>
-    <div class="compatibility-overlay" id="compatibilityOverlay">
-        <div class="compatibility-card glass-card">
-            <div class="eyebrow">Compatibility Check</div>
-            <h1>Prepare your system for the interview</h1>
-            <p>
-                Complete every required test before entering the interview panel.
-                Please allow all permissions when prompted.
-            </p>
+    {% if show_waiting %}
+    <div class="page-shell waiting-shell" id="waitingShell">
+        <header class="dashboard-header">
+            <div>
+                <div class="eyebrow">Interview Waiting Room</div>
+                <h1>Welcome, {{ name }}</h1>
+                <p>Your interview is scheduled for {{ interview_time }}.</p>
+            </div>
+            <div class="header-actions">
+                <a class="ghost-link" href="/">Exit</a>
+            </div>
+        </header>
 
-            <div class="progress-shell">
-                <div class="progress-header">
-                    <span>Completion</span>
-                    <strong id="compatPercent">0%</strong>
-                </div>
-                <div class="progress-track">
-                    <div class="progress-fill" id="compatProgress"></div>
+        <section class="waiting-banner glass-card">
+            <div class="waiting-copy">
+                <h2 id="waitingTitle">{% if is_waiting %}You are early for the interview{% else %}You can enter the interview now{% endif %}</h2>
+                <p id="waitingMessage">
+                    {% if is_waiting %}
+                        Please stay on this page. You can run the System Compatibility Check while you wait.
+                    {% else %}
+                        You can enter the interview now or run the System Compatibility Check first.
+                    {% endif %}
+                </p>
+            </div>
+            <div class="countdown-card">
+                <span>Starts in</span>
+                <strong id="countdownText">{{ seconds_until_start }}s</strong>
+            </div>
+        </section>
+
+        <section class="compatibility-grid">
+            <div class="glass-card">
+                <h2>Before You Begin</h2>
+                <p class="muted">Use the compatibility page to test microphone, speaker, webcam, screen sharing, and internet/browser support.</p>
+                <div class="compat-actions waiting-actions">
+                    <a class="button-link" href="{{ url_for('system_check', token=token) }}">Run System Compatibility Check</a>
+                    <a class="button-link secondary-link" id="enterInterviewLink" href="{{ url_for('interview_room', token=token, mode='start') }}" {% if is_waiting %}aria-disabled="true" tabindex="-1"{% endif %}>Enter Interview</a>
                 </div>
             </div>
 
-            <div class="compatibility-list">
-                <div class="compat-item">
-                    <span>System Compatibility</span>
-                    <strong id="checkSystem">Pending</strong>
-                </div>
-                <div class="compat-item">
-                    <span>Microphone</span>
-                    <strong id="checkMic">Pending</strong>
-                    <div class="mic-meter" id="micMeter"></div>
-                </div>
-                <div class="compat-item">
-                    <span>Webcam</span>
-                    <strong id="checkCamera">Pending</strong>
-                </div>
-                <div class="compat-item">
-                    <span>Screen Share</span>
-                    <strong id="checkScreen">Pending</strong>
-                </div>
-                <div class="compat-item">
-                    <span>Internet / Latency</span>
-                    <strong id="checkInternet">Pending</strong>
-                </div>
-                <div class="compat-item">
-                    <span>Browser Compatibility</span>
-                    <strong id="checkBrowser">Pending</strong>
-                </div>
-                <div class="compat-item">
-                    <span>Fullscreen Ready</span>
-                    <strong id="checkFullscreen">Pending</strong>
+            <div class="glass-card">
+                <h2>What happens next</h2>
+                <div class="detail-list">
+                    <ul>
+                        <li>Test the microphone and confirm your voice is picked up.</li>
+                        <li>Test the speaker so you can hear the sample sound.</li>
+                        <li>Check your webcam and screen-sharing permissions.</li>
+                        <li>When the timer reaches zero, enter the interview room.</li>
+                    </ul>
                 </div>
             </div>
-
-            <div class="compat-actions">
-                <button type="button" id="runCompatBtn">Run All Tests</button>
-                <button type="button" id="shareCompatBtn" class="btn-secondary">Share Screen</button>
-                <button type="button" id="continueCompatBtn" class="btn-secondary" disabled>Proceed to Interview</button>
-            </div>
-        </div>
+        </section>
     </div>
+    {% endif %}
 
-    <div class="page-shell interview-shell" id="interviewShell" hidden>
+    {% if show_interview %}
+    <div class="page-shell interview-shell interview-room-shell" id="interviewShell">
         <header class="dashboard-header">
             <div>
                 <div class="eyebrow">Candidate Session</div>
@@ -89,36 +89,43 @@
 
         <div class="warning-banner" id="warningBanner" hidden></div>
 
-        <div class="interview-grid">
-            <div class="video-container">
-                <video id="webcam" autoplay playsinline muted></video>
-                <video id="screenPreview" autoplay playsinline muted class="screen-preview" hidden></video>
-                <div id="camStatus" class="status-badge status-on">CAM ON</div>
-                <div id="screenStatus" class="status-badge status-off" style="top: 3rem;">SCREEN OFF</div>
-                <div id="micStatus" class="status-badge status-on" style="top: 5rem;">MIC ON</div>
-            </div>
+        <div class="interview-room-layout">
+                <div class="camera-rail">
+                    <div class="video-container camera-preview-card">
+                        <video id="webcam" autoplay playsinline muted></video>
+                        <div id="camStatus" class="status-badge status-on">CAM ON</div>
+                        <div id="micStatus" class="status-badge status-on" style="top: 3rem;">MIC ON</div>
+                    </div>
+                </div>
 
-            <div class="glass-card chat-box">
+            <div class="glass-card chat-box interview-chat">
                 <div class="messages" id="chatMessages">
                     <div class="message msg-ai">Waiting for you to start the interview...</div>
                 </div>
+                <form class="chat-composer" id="chatComposer">
+                    <textarea
+                        id="chatInput"
+                        placeholder="Type your answer here..."
+                        rows="3"
+                    ></textarea>
+                    <button type="submit" class="composer-send">Send</button>
+                </form>
             </div>
         </div>
 
-        <div class="controls">
-            <button id="shareBtn" style="width:auto; padding:1rem 3rem; background:#14b8a6;">SHARE ENTIRE SCREEN</button>
+        <div class="controls interview-controls">
             <button id="startBtn" style="width:auto; padding:1rem 3rem;">START INTERVIEW</button>
             <button id="listenBtn" style="display:none; width:auto; background:#10b981;">
                 <i class="fas fa-microphone"></i> SPEAK NOW
             </button>
             <button id="endBtn" class="btn-red" style="display:none; width:auto;">END INTERVIEW</button>
         </div>
-
-        <div class="screen-note glass-card">
-            <strong>Screen share required:</strong> The interview panel will stay locked until every compatibility test passes and fullscreen is enabled.
-        </div>
     </div>
+    {% endif %}
 
+    <script src="{{ url_for('static', filename='js/waiting.js') }}"></script>
+    {% if show_interview %}
     <script src="{{ url_for('static', filename='js/interview.js') }}"></script>
+    {% endif %}
 </body>
 </html>

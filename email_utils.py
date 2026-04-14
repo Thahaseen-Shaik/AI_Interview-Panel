@@ -1,10 +1,13 @@
-import smtplib
 import os
-from email.mime.text import MIMEText
+import smtplib
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 from dotenv import load_dotenv
 
 load_dotenv()
+load_dotenv(".env.example")
+
 
 def _first_env(*names, default=""):
     for name in names:
@@ -20,16 +23,18 @@ SMTP_USER = _first_env("SMTP_USER", default="")
 MAIL_PASSWORD = _first_env("MAIL_PASSWORD", "SMTP_PASSWORD", default="")
 SMTP_FROM = _first_env("SMTP_FROM", default=SMTP_USER or "AI Interview Room")
 
-def send_interview_email(to_email, candidate_name, interview_time, interview_link):
-    if not SMTP_USER or not MAIL_PASSWORD:
-        print("[INFO] SMTP credentials not set. Email delivery skipped.")
-        print(f"Link: {interview_link}")
-        return None
 
+def _build_interview_message(to_email, candidate_name, interview_time, interview_link):
+    compatibility_link = (
+        interview_link.replace("/interview?", "/system-check?")
+        if "/interview?" in interview_link
+        else interview_link
+    )
+    start_link = interview_link if "mode=" in interview_link else f"{interview_link}&mode=start"
     msg = MIMEMultipart()
-    msg['From'] = SMTP_FROM if "@" in SMTP_FROM else SMTP_USER
-    msg['To'] = to_email
-    msg['Subject'] = f"AI Interview Invitation - {candidate_name}"
+    msg["From"] = SMTP_FROM if "@" in SMTP_FROM else SMTP_USER
+    msg["To"] = to_email
+    msg["Subject"] = f"AI Interview Invitation - {candidate_name}"
 
     html = f"""
     <html>
@@ -40,6 +45,7 @@ def send_interview_email(to_email, candidate_name, interview_time, interview_lin
             .header {{ background-color: #4A90E2; color: white; padding: 10px; text-align: center; border-radius: 8px 8px 0 0; }}
             .content {{ padding: 20px; }}
             .button {{ display: inline-block; padding: 10px 20px; color: white; background-color: #4A90E2; text-decoration: none; border-radius: 5px; margin-top: 15px; }}
+            .button-secondary {{ display: inline-block; padding: 10px 20px; color: white; background-color: #10b981; text-decoration: none; border-radius: 5px; margin-top: 10px; }}
             .checklist {{ margin-top: 14px; padding-left: 18px; }}
         </style>
     </head>
@@ -55,21 +61,31 @@ def send_interview_email(to_email, candidate_name, interview_time, interview_lin
                 <ul class="checklist">
                     <li>Your camera is working and permission is allowed</li>
                     <li>Your microphone is enabled and unmuted</li>
-                    <li>You can share your entire screen when prompted</li>
                     <li>You use a supported browser like Chrome or Edge</li>
                     <li>You keep a stable internet connection during the interview</li>
                 </ul>
-                <p>When you open the interview, you will first see a compatibility check page for camera, mic, screen share, and text support.</p>
-                <p>After that, you can share your screen and start the interview.</p>
+                <p>When you open the interview, you will first see a System Compatibility Check page for camera, microphone, speaker, and internet support.</p>
+                <p>After that, you can wait for the scheduled time and start the interview when it opens.</p>
                 <p>Note that you won't be able to join before or significantly after the slot.</p>
-                <a href="{interview_link}" class="button">Join Interview</a>
+                <a href="{compatibility_link}" class="button">System Compatibility Check</a>
+                <br>
+                <a href="{start_link}" class="button-secondary">Start Interview</a>
                 <p>Good luck!</p>
             </div>
         </div>
     </body>
     </html>
     """
-    msg.attach(MIMEText(html, 'html'))
+    msg.attach(MIMEText(html, "html"))
+    return msg
+
+
+def _send_messages(messages):
+    if not SMTP_USER or not MAIL_PASSWORD:
+        print("[INFO] SMTP credentials not set. Email delivery skipped.")
+        for message in messages:
+            print(f"Link: {message['To']}")
+        return None
 
     try:
         if SMTP_PORT == 465:
@@ -80,8 +96,27 @@ def send_interview_email(to_email, candidate_name, interview_time, interview_lin
             if SMTP_PORT != 465:
                 server.starttls()
             server.login(SMTP_USER, MAIL_PASSWORD)
-            server.send_message(msg)
+            for message in messages:
+                server.send_message(message)
         return True
     except Exception as e:
         print(f"[ERROR] Failed to send email: {e}")
         return False
+
+
+def send_interview_email(to_email, candidate_name, interview_time, interview_link):
+    message = _build_interview_message(to_email, candidate_name, interview_time, interview_link)
+    return _send_messages([message])
+
+
+def send_bulk_interview_emails(recipients):
+    messages = [
+        _build_interview_message(
+            recipient["to_email"],
+            recipient["candidate_name"],
+            recipient["interview_time"],
+            recipient["interview_link"],
+        )
+        for recipient in recipients
+    ]
+    return _send_messages(messages)

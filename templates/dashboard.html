@@ -14,8 +14,8 @@
         <header class="dashboard-header">
             <div>
                 <div class="eyebrow">Interview Scheduler</div>
-                <h1>Welcome, {{ admin_username }}</h1>
-                <p>Schedule interviews and track the completed candidate score from this portal.</p>
+                <h1>Welcome, Admin</h1>
+                <p>Schedule one interview or send up to 100 invitations in a single batch.</p>
             </div>
             <div class="header-actions">
                 <a class="ghost-link" href="{{ url_for('logout') }}">Logout</a>
@@ -46,29 +46,59 @@
         </section>
 
         <section class="dashboard-grid">
-            <div class="glass-card">
-                <h2>Schedule New Interview</h2>
-                <form id="scheduleForm">
-                    <div class="form-group">
-                        <label for="name">Candidate Name</label>
-                        <input type="text" id="name" name="name" placeholder="John Doe" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="email">Candidate Email</label>
-                        <input type="email" id="email" name="email" placeholder="john@example.com" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="time">Interview Time</label>
-                        <input type="datetime-local" id="time" name="time" required>
-                    </div>
-                    <button type="submit">Schedule Interview</button>
-                </form>
+            <div class="dashboard-stack">
+                <div class="glass-card">
+                    <h2>Schedule New Interview</h2>
+                    <form id="scheduleForm">
+                        <div class="form-group">
+                            <label for="name">Candidate Name</label>
+                            <input type="text" id="name" name="name" placeholder="John Doe" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="email">Candidate Email</label>
+                            <input type="email" id="email" name="email" placeholder="john@example.com" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="time">Interview Time</label>
+                            <input type="datetime-local" id="time" name="time" required>
+                        </div>
+                        <button type="submit">Schedule Interview</button>
+                    </form>
 
-                <div id="result" class="result-box" style="display:none;">
-                    <p id="msg"></p>
-                    <div class="form-group">
-                        <label for="link">Interview Link</label>
-                        <input type="text" id="link" readonly>
+                    <div id="singleResult" class="result-box" hidden>
+                        <p id="singleMsg"></p>
+                        <div class="form-group">
+                            <label for="singleLink">Interview Link</label>
+                            <input type="text" id="singleLink" readonly>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-card">
+                    <h2>Bulk Schedule Up to 100</h2>
+                    <p class="muted">Paste one candidate per line using <code>Name, email</code>, <code>Name &lt;email&gt;</code>, or just an email address.</p>
+                    <form id="bulkScheduleForm">
+                        <div class="form-group">
+                            <label for="bulkTime">Interview Time</label>
+                            <input type="datetime-local" id="bulkTime" name="time" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="candidates">Candidate List</label>
+                            <textarea
+                                id="candidates"
+                                name="candidates"
+                                rows="8"
+                                placeholder="John Doe, john@example.com&#10;Priya Sharma &lt;priya@example.com&gt;&#10;sam@example.com"
+                                required
+                            ></textarea>
+                        </div>
+                        <button type="submit">Schedule Bulk Interviews</button>
+                    </form>
+
+                    <div id="bulkResult" class="result-box" hidden>
+                        <p id="bulkMsg"></p>
+                        <div class="batch-summary" id="bulkSummary"></div>
+                        <div class="batch-list" id="bulkList"></div>
                     </div>
                 </div>
             </div>
@@ -160,6 +190,75 @@
             }
         }
 
+        function renderSingleResult(response) {
+            const container = document.getElementById('singleResult');
+            const messageEl = document.getElementById('singleMsg');
+            const linkEl = document.getElementById('singleLink');
+
+            container.hidden = false;
+            messageEl.innerHTML = '';
+            const messageLine = document.createElement('div');
+            messageLine.textContent = response.message;
+            messageEl.appendChild(messageLine);
+            if (response.warning) {
+                const warningLine = document.createElement('div');
+                warningLine.className = 'muted';
+                warningLine.textContent = response.warning;
+                messageEl.appendChild(warningLine);
+            }
+            linkEl.value = response.link || '';
+        }
+
+        function renderBulkResult(response) {
+            const container = document.getElementById('bulkResult');
+            const messageEl = document.getElementById('bulkMsg');
+            const summaryEl = document.getElementById('bulkSummary');
+            const listEl = document.getElementById('bulkList');
+
+            container.hidden = false;
+            messageEl.innerHTML = '';
+            const messageLine = document.createElement('div');
+            messageLine.textContent = response.message;
+            messageEl.appendChild(messageLine);
+            if (response.warning) {
+                const warningLine = document.createElement('div');
+                warningLine.className = 'muted';
+                warningLine.textContent = response.warning;
+                messageEl.appendChild(warningLine);
+            }
+            summaryEl.innerHTML = '';
+            const summaryStrong = document.createElement('strong');
+            summaryStrong.textContent = String(response.scheduled_count || 0);
+            summaryEl.appendChild(summaryStrong);
+            summaryEl.appendChild(document.createTextNode(' interview(s) scheduled.'));
+            listEl.innerHTML = '';
+
+            (response.scheduled || []).forEach((item) => {
+                const row = document.createElement('div');
+                row.className = 'batch-item';
+                const info = document.createElement('div');
+                const name = document.createElement('strong');
+                name.textContent = item.candidate_name;
+                const email = document.createElement('div');
+                email.className = 'muted';
+                email.textContent = item.candidate_email;
+                info.appendChild(name);
+                info.appendChild(email);
+
+                const linkWrap = document.createElement('div');
+                linkWrap.className = 'batch-link-wrap';
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.readOnly = true;
+                input.value = item.link;
+                linkWrap.appendChild(input);
+
+                row.appendChild(info);
+                row.appendChild(linkWrap);
+                listEl.appendChild(row);
+            });
+        }
+
         const form = document.getElementById('scheduleForm');
         form.onsubmit = async (e) => {
             e.preventDefault();
@@ -175,19 +274,57 @@
                 });
                 const data = await response.json();
 
-                document.getElementById('result').style.display = 'block';
+                if (!response.ok) {
+                    throw new Error(data.message || 'Failed to schedule interview');
+                }
+
+                renderSingleResult(data);
                 const note = data.email_status === 'sent'
                     ? ' (Email sent)'
                     : data.email_status === 'skipped'
                         ? ' (Email skipped because SMTP is not configured)'
                         : ' (Email delivery failed)';
-                document.getElementById('msg').innerText = data.message + note;
-                document.getElementById('link').value = data.link;
+                document.getElementById('singleMsg').innerText = data.message + note;
             } catch (error) {
                 alert('Error: ' + error);
             } finally {
                 button.disabled = false;
                 button.innerText = 'Schedule Interview';
+            }
+        };
+
+        const bulkForm = document.getElementById('bulkScheduleForm');
+        bulkForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(bulkForm);
+            const button = bulkForm.querySelector('button');
+            button.disabled = true;
+            button.innerText = 'Scheduling Batch...';
+
+            try {
+                const response = await fetch('{{ url_for("schedule_bulk") }}', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    const errors = data.errors ? `\n${data.errors.join('\n')}` : '';
+                    throw new Error((data.message || 'Failed to schedule bulk interviews') + errors);
+                }
+
+                renderBulkResult(data);
+                const note = data.email_status === 'sent'
+                    ? ' (Emails sent)'
+                    : data.email_status === 'skipped'
+                        ? ' (SMTP not configured, emails skipped)'
+                        : ' (Email delivery failed)';
+                document.getElementById('bulkMsg').innerText = data.message + note;
+            } catch (error) {
+                alert('Error: ' + error);
+            } finally {
+                button.disabled = false;
+                button.innerText = 'Schedule Bulk Interviews';
             }
         };
 

@@ -1,8 +1,10 @@
 import json
 import os
 import re
+import socket
 from datetime import datetime, timedelta
 from functools import wraps
+from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -17,27 +19,92 @@ from database import (
     get_all_interviews,
     get_compatibility_checks,
     get_interview_by_token,
+    get_interview_context,
     get_interview_messages,
     get_proctoring_events,
     init_db,
     save_interview_message,
     save_compatibility_check,
     save_proctoring_event,
+    save_interview_context,
     schedule_interview,
+    schedule_interviews_bulk,
     update_interview_started,
 )
-from email_utils import send_interview_email
+from email_utils import send_bulk_interview_emails, send_interview_email
 
 
 load_dotenv()
+load_dotenv(".env.example")
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
 init_db()
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
+
+
+def _is_local_base_url(base_url):
+    if not base_url:
+        return True
+    parsed = urlparse(base_url if "://" in base_url else f"http://{base_url}")
+    hostname = (parsed.hostname or "").lower()
+    return hostname in {
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "::1",
+        "your-public-domain.com",
+        "example.com",
+    }
+
+
+def _resolve_invite_base_url():
+    for candidate in (
+        os.getenv("PUBLIC_BASE_URL", "").strip(),
+        os.getenv("BASE_URL", "").strip(),
+        request.url_root.rstrip("/") if request and request.url_root else "",
+    ):
+        if candidate:
+            candidate = candidate.rstrip("/")
+            if not _is_local_base_url(candidate):
+                return candidate
+
+    local_ip = _detect_lan_base_url()
+    if local_ip:
+        return local_ip
+
+    if request and request.url_root:
+        return request.url_root.rstrip("/")
+    return BASE_URL.rstrip("/")
+
+
+def _detect_lan_base_url():
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect(("8.8.8.8", 80))
+            local_ip = probe.getsockname()[0]
+        finally:
+            probe.close()
+
+        if local_ip and not local_ip.startswith("127.") and local_ip != "0.0.0.0":
+            return f"http://{local_ip}:8000"
+    except Exception:
+        pass
+    return ""
+
+
+def _invite_url_warning(base_url):
+    if _is_local_base_url(base_url):
+        return (
+            "Invite links are still using a local address. If recipients are on another network, "
+            "set PUBLIC_BASE_URL to a public deployment URL."
+        )
+    return ""
 
 
 def login_required(view):
@@ -89,84 +156,438 @@ def _rows_to_dicts(rows):
     ]
 
 
-def _calculate_fallback_score(messages, duration_minutes, completed=True):
-    candidate_messages = [
-        item for item in messages if item.get("speaker") in ("candidate", "user")
-    ]
-    ai_messages = [item for item in messages if item.get("speaker") == "ai"]
-    candidate_words = sum(
-        len(re.findall(r"\w+", item.get("content", ""))) for item in candidate_messages
+def _groq_chat(messages, *, temperature=0.7, max_tokens=256):
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+
+    response = requests.post(
+        f"{GROQ_BASE_URL.rstrip('/')}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": GROQ_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        },
+        timeout=30,
     )
-    candidate_turns = len(candidate_messages)
+    response.raise_for_status()
+    payload = response.json()
+    choices = payload.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    return (message.get("content") or "").strip()
 
-    score = 20
-    score += min(25, int(round((duration_minutes or 0) * 2)))
-    score += min(25, candidate_turns * 5)
-    score += min(20, candidate_words // 8)
-    score += min(10, len(ai_messages) * 2)
-    if completed:
-        score += 10
 
-    score = max(0, min(100, int(score)))
-    if score >= 85:
-        summary = "Excellent interview performance with strong engagement and depth."
-    elif score >= 70:
-        summary = "Good interview performance with solid communication and preparation."
-    elif score >= 50:
-        summary = "Average interview performance with room to improve depth and clarity."
+def _groq_history_from_rows(rows):
+    history = []
+    for row in rows[-20:]:
+        content = (row["content"] or "").strip()
+        if not content:
+            continue
+        role = "assistant" if row["speaker"] == "ai" else "user"
+        history.append({"role": role, "content": content})
+    return history
+
+
+EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+TOKEN_PATTERN = re.compile(r"[a-z0-9']+")
+
+STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "because",
+    "but",
+    "can",
+    "could",
+    "do",
+    "does",
+    "for",
+    "from",
+    "has",
+    "have",
+    "how",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "please",
+    "so",
+    "that",
+    "the",
+    "their",
+    "this",
+    "to",
+    "we",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+    "you",
+    "your",
+}
+
+FILLER_PATTERNS = (
+    r"\bum\b",
+    r"\buh\b",
+    r"\ber\b",
+    r"\bah\b",
+    r"\blike\b",
+    r"\byou know\b",
+    r"\bbasically\b",
+    r"\bactually\b",
+    r"\bsort of\b",
+    r"\bkind of\b",
+)
+
+TECHNICAL_TERMS = {
+    "algorithm",
+    "api",
+    "architecture",
+    "authentication",
+    "automation",
+    "backend",
+    "cloud",
+    "coding",
+    "concurrency",
+    "data",
+    "database",
+    "debugging",
+    "deployment",
+    "design",
+    "frontend",
+    "framework",
+    "html",
+    "http",
+    "integration",
+    "java",
+    "javascript",
+    "kubernetes",
+    "learning",
+    "machine",
+    "model",
+    "network",
+    "optimization",
+    "python",
+    "react",
+    "reliability",
+    "security",
+    "sql",
+    "testing",
+    "training",
+    "ui",
+    "ux",
+}
+
+
+def _normalize_candidate_name(email_address):
+    local_part = email_address.split("@", 1)[0]
+    local_part = re.sub(r"[._-]+", " ", local_part).strip()
+    return local_part.title() if local_part else "Candidate"
+
+
+def _tokenize(text):
+    return TOKEN_PATTERN.findall((text or "").lower())
+
+
+def _count_filler_terms(text):
+    lowered = (text or "").lower()
+    return sum(len(re.findall(pattern, lowered)) for pattern in FILLER_PATTERNS)
+
+
+def _collect_candidate_response_stats(messages):
+    candidate_texts = []
+    paired_questions = []
+    last_ai_message = ""
+
+    for item in messages:
+        speaker = item.get("speaker")
+        content = (item.get("content") or "").strip()
+        if not content:
+            continue
+        if speaker == "ai":
+            last_ai_message = content
+        elif speaker in ("candidate", "user"):
+            candidate_texts.append(content)
+            paired_questions.append(last_ai_message)
+
+    combined_text = " ".join(candidate_texts)
+    tokens = _tokenize(combined_text)
+    unique_tokens = set(tokens)
+    total_words = len(tokens)
+    total_turns = len(candidate_texts)
+    average_turn_words = (total_words / total_turns) if total_turns else 0
+    filler_count = sum(_count_filler_terms(text) for text in candidate_texts)
+    punctuation_count = len(re.findall(r"[.!?]", combined_text))
+    tech_term_hits = sum(1 for token in unique_tokens if token in TECHNICAL_TERMS)
+
+    relevance_scores = []
+    for answer, question in zip(candidate_texts, paired_questions):
+        answer_tokens = {
+            token for token in _tokenize(answer) if len(token) > 2 and token not in STOPWORDS
+        }
+        question_tokens = {
+            token for token in _tokenize(question) if len(token) > 2 and token not in STOPWORDS
+        }
+        if not question_tokens:
+            continue
+        overlap = len(answer_tokens & question_tokens)
+        relevance_scores.append(min(1.0, overlap / max(4, len(question_tokens) / 2)))
+
+    relevance_score = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0.45
+
+    speaking_score = 0
+    speaking_score += min(12, total_turns * 3)
+    speaking_score += min(8, int(round(average_turn_words / 5)))
+    speaking_score += min(6, punctuation_count)
+    speaking_score += min(4, len(unique_tokens) // 25)
+    speaking_score -= min(10, filler_count * 2)
+    speaking_score = max(0, min(30, speaking_score))
+
+    grammar_score = 8
+    grammar_score += min(7, punctuation_count)
+    grammar_score += 4 if total_turns >= 2 else 1
+    grammar_score += 4 if average_turn_words >= 12 else 1
+    grammar_score -= min(12, filler_count * 2)
+    grammar_score -= 2 if total_words and len(unique_tokens) / max(1, total_words) < 0.45 else 0
+    grammar_score = max(0, min(25, grammar_score))
+
+    role_content_score = int(round(relevance_score * 18))
+    role_content_score += min(7, total_words // 30)
+    role_content_score += 2 if total_turns >= 3 else 0
+    role_content_score = max(0, min(25, role_content_score))
+
+    subject_knowledge_score = 0
+    subject_knowledge_score += min(8, tech_term_hits * 2)
+    subject_knowledge_score += min(6, total_words // 40)
+    subject_knowledge_score += min(4, len({token for token in unique_tokens if len(token) >= 8}) // 3)
+    subject_knowledge_score += 2 if any(
+        token in {"built", "implemented", "designed", "resolved", "improved", "optimized"}
+        for token in unique_tokens
+    ) else 0
+    subject_knowledge_score = max(0, min(20, subject_knowledge_score))
+
+    return {
+        "candidate_texts": candidate_texts,
+        "total_turns": total_turns,
+        "total_words": total_words,
+        "average_turn_words": average_turn_words,
+        "filler_count": filler_count,
+        "punctuation_count": punctuation_count,
+        "relevance_score": relevance_score,
+        "speaking_score": speaking_score,
+        "grammar_score": grammar_score,
+        "role_content_score": role_content_score,
+        "subject_knowledge_score": subject_knowledge_score,
+    }
+
+
+def _parse_candidate_line(line):
+    normalized = line.strip()
+    if not normalized:
+        return None, None
+
+    email_match = EMAIL_PATTERN.search(normalized)
+    email = email_match.group(0).strip() if email_match else ""
+    name = normalized
+
+    if "<" in normalized and ">" in normalized:
+        before, _, remainder = normalized.partition("<")
+        name = before.strip().rstrip(",|-")
+        email = remainder.split(">", 1)[0].strip()
+    elif "," in normalized:
+        left, right = normalized.split(",", 1)
+        name = left.strip()
+        right_email = EMAIL_PATTERN.search(right)
+        if right_email:
+            email = right_email.group(0).strip()
+    elif "|" in normalized:
+        left, right = normalized.split("|", 1)
+        name = left.strip()
+        right_email = EMAIL_PATTERN.search(right)
+        if right_email:
+            email = right_email.group(0).strip()
+    elif not email:
+        parts = normalized.split()
+        if len(parts) == 1 and EMAIL_PATTERN.fullmatch(parts[0]):
+            email = parts[0]
+        elif len(parts) > 1:
+            potential_email = parts[-1]
+            if EMAIL_PATTERN.fullmatch(potential_email):
+                email = potential_email
+                name = " ".join(parts[:-1]).strip()
+
+    if not email or not EMAIL_PATTERN.fullmatch(email):
+        return None, "Each candidate needs a valid email address."
+
+    if not name or name == email:
+        name = _normalize_candidate_name(email)
     else:
-        summary = "Interview showed limited engagement or incomplete responses."
+        name = re.sub(r"\s+", " ", name).strip(" ,|-")
+
+    return {
+        "candidate_name": name,
+        "candidate_email": email,
+    }, None
+
+
+def _parse_bulk_candidates(raw_text):
+    candidates = []
+    errors = []
+
+    for line_number, raw_line in enumerate((raw_text or "").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        candidate, error = _parse_candidate_line(line)
+        if error:
+            errors.append(f"Line {line_number}: {error}")
+            continue
+        candidates.append(candidate)
+
+    return candidates, errors
+
+
+def _build_interview_link(base_url, token):
+    return f"{base_url}/interview?token={token}"
+
+
+def _schedule_candidate_batch(candidates, interview_time, base_url):
+    scheduled = schedule_interviews_bulk(candidates, interview_time)
+    recipients = [
+        {
+            "candidate_name": row["candidate_name"],
+            "to_email": row["candidate_email"],
+            "interview_time": row["interview_time"],
+            "interview_link": _build_interview_link(base_url, row["token"]),
+        }
+        for row in scheduled
+    ]
+
+    if len(recipients) == 1:
+        email_result = send_interview_email(
+            recipients[0]["to_email"],
+            recipients[0]["candidate_name"],
+            recipients[0]["interview_time"],
+            recipients[0]["interview_link"],
+        )
+    else:
+        email_result = send_bulk_interview_emails(recipients)
+
+    if email_result is True:
+        email_status = "sent"
+    elif email_result is None:
+        email_status = "skipped"
+    else:
+        email_status = "failed"
+
+    return scheduled, recipients, email_status
+
+
+def _calculate_fallback_score(messages, duration_minutes, completed=True):
+    stats = _collect_candidate_response_stats(messages)
+
+    score = 0
+    score += stats["speaking_score"]
+    score += stats["grammar_score"]
+    score += stats["role_content_score"]
+    score += stats["subject_knowledge_score"]
+    if completed:
+        score += 4
+    if duration_minutes and duration_minutes >= 5:
+        score += 3
+
+    score = max(0, min(100, int(round(score))))
+    if score >= 85:
+        summary = "Excellent speaking, grammar, role relevance, and subject knowledge."
+    elif score >= 70:
+        summary = "Strong interview performance with good clarity and solid technical depth."
+    elif score >= 50:
+        summary = "Average interview performance with room to improve fluency, grammar, and depth."
+    else:
+        summary = "Interview needs stronger speaking clarity, grammar, and role-specific detail."
+
+    grammar_note = (
+        "Keep grammar and sentence structure consistent under pressure."
+        if stats["grammar_score"] >= 17
+        else "Grammar and sentence structure need more polish."
+    )
+    speaking_note = (
+        "Speaking was clear and confident."
+        if stats["speaking_score"] >= 20
+        else "Speaking fluency and pacing can improve."
+    )
+    content_note = (
+        "Answers stayed relevant to the interview questions."
+        if stats["role_content_score"] >= 15
+        else "Answers should stay more tightly focused on the role."
+    )
+    knowledge_note = (
+        "Continue adding deeper technical examples."
+        if stats["subject_knowledge_score"] >= 12
+        else "Subject knowledge needs more depth and examples."
+    )
 
     return {
         "score": score,
         "summary": summary,
         "strengths": [
             "Completed the interview flow" if completed else "Interview still in progress",
-            f"Answered {candidate_turns} question(s)",
+            speaking_note if stats["speaking_score"] >= 20 else "Speaking needs more fluency and confidence.",
+            content_note if stats["role_content_score"] >= 15 else "Need more role-specific and relevant detail.",
         ],
         "concerns": [
-            "Add more technical depth" if candidate_words < 120 else "Could still sharpen examples",
+            grammar_note if stats["grammar_score"] < 17 else "Maintain that grammar quality consistently.",
+            knowledge_note if stats["subject_knowledge_score"] < 12 else "Keep building on strong subject knowledge.",
         ],
     }
 
 
-def _score_with_ollama(messages, duration_minutes, completed=True):
+def _score_with_groq(messages, duration_minutes, completed=True):
     transcript_text = _normalize_transcript(messages)
     if not transcript_text.strip():
         return None
 
-    prompt = f"""
-You are an interview evaluator.
-Return ONLY valid JSON with these keys:
-- score: integer from 0 to 100
-- summary: short single paragraph
-- strengths: array of short bullet phrases
-- concerns: array of short bullet phrases
-
-Scoring guidance:
-- Judge clarity, relevance, confidence, and depth of answers.
-- If the interview was not completed, reduce the score slightly.
-- Keep the output concise and valid JSON only.
-
-Duration minutes: {duration_minutes:.1f}
-Completed: {str(completed).lower()}
-
-Transcript:
-{transcript_text}
-"""
-
-    response = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-        },
-        timeout=25,
+    system_message = (
+        "You are an interview evaluator. Return ONLY valid JSON with these keys: "
+        "score (integer from 0 to 100), summary (short single paragraph), strengths (array of short bullet phrases), "
+        "concerns (array of short bullet phrases). "
+        "Scoring rubric: speaking skill and fluency 30 points, grammar accuracy and sentence clarity 25 points, "
+        "role content and relevance 25 points, subject knowledge and depth 20 points. "
+        "Favor answers that sound clear, confident, and easy to understand. Penalize repeated grammar issues, filler words, "
+        "and vague responses. Reward role-specific content, accurate technical detail, and good examples. "
+        "If the interview was not completed, reduce the score slightly. Keep the output concise and valid JSON only."
     )
-    response.raise_for_status()
-    payload = response.json()
-    text = (payload.get("response") or "").strip()
+    user_message = (
+        f"Duration minutes: {duration_minutes:.1f}\n"
+        f"Completed: {str(completed).lower()}\n\n"
+        f"Transcript:\n{transcript_text}"
+    )
+
+    text = _groq_chat(
+        [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.2,
+        max_tokens=512,
+    )
     text = re.sub(r"^```json\s*", "", text)
     text = re.sub(r"^```\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
@@ -182,7 +603,7 @@ Transcript:
 
 def score_interview(messages, duration_minutes, completed=True):
     try:
-        scored = _score_with_ollama(messages, duration_minutes, completed=completed)
+        scored = _score_with_groq(messages, duration_minutes, completed=completed)
         if scored:
             return scored
     except Exception:
@@ -273,28 +694,91 @@ def schedule():
 
     if not name or not email or not interview_time:
         return jsonify({"message": "All fields are required."}), 400
+    base_url = _resolve_invite_base_url()
+    scheduled, recipients, email_status = _schedule_candidate_batch(
+        [
+            {
+                "candidate_name": name,
+                "candidate_email": email,
+            }
+        ],
+        interview_time,
+        base_url,
+    )
+    interview = scheduled[0]
+    link = recipients[0]["interview_link"]
 
-    token = schedule_interview(name, email, interview_time)
-    base_url = request.url_root.rstrip("/") if request.url_root else BASE_URL.rstrip("/")
-    link = f"{base_url}/interview?token={token}"
-
-    email_result = send_interview_email(email, name, interview_time, link)
-    if email_result is True:
+    if email_status == "sent":
         message = "Interview scheduled and email sent."
-        email_status = "sent"
-    elif email_result is None:
+    elif email_status == "skipped":
         message = "Interview scheduled."
-        email_status = "skipped"
     else:
         message = "Interview scheduled, but email delivery failed."
-        email_status = "failed"
 
     return jsonify(
         {
             "message": message,
             "link": link,
-            "token": token,
+            "token": interview["token"],
             "email_status": email_status,
+            "scheduled_count": 1,
+            "invite_base_url": base_url,
+            "warning": _invite_url_warning(base_url),
+            "scheduled": [
+                {
+                    "candidate_name": interview["candidate_name"],
+                    "candidate_email": interview["candidate_email"],
+                    "link": link,
+                    "token": interview["token"],
+                }
+            ],
+        }
+    )
+
+
+@app.route("/schedule/bulk", methods=["POST"])
+@login_required
+def schedule_bulk():
+    interview_time = (request.form.get("time") or "").strip()
+    candidates_text = request.form.get("candidates") or ""
+
+    if not interview_time:
+        return jsonify({"message": "Interview time is required."}), 400
+
+    candidates, errors = _parse_bulk_candidates(candidates_text)
+    if errors:
+        return jsonify({"message": "One or more candidate lines are invalid.", "errors": errors}), 400
+    if not candidates:
+        return jsonify({"message": "Add at least one candidate."}), 400
+    if len(candidates) > 100:
+        return jsonify({"message": "You can schedule up to 100 interviews at once."}), 400
+
+    base_url = _resolve_invite_base_url()
+    scheduled, recipients, email_status = _schedule_candidate_batch(candidates, interview_time, base_url)
+
+    if email_status == "sent":
+        message = f"Scheduled {len(scheduled)} interviews and sent all invitations."
+    elif email_status == "skipped":
+        message = f"Scheduled {len(scheduled)} interviews. SMTP is not configured, so emails were skipped."
+    else:
+        message = f"Scheduled {len(scheduled)} interviews, but email delivery failed."
+
+    return jsonify(
+        {
+            "message": message,
+            "email_status": email_status,
+            "scheduled_count": len(scheduled),
+            "invite_base_url": base_url,
+            "warning": _invite_url_warning(base_url),
+            "scheduled": [
+                {
+                    "candidate_name": row["candidate_name"],
+                    "candidate_email": row["candidate_email"],
+                    "link": recipient["interview_link"],
+                    "token": row["token"],
+                }
+                for row, recipient in zip(scheduled, recipients)
+            ],
         }
     )
 
@@ -309,6 +793,11 @@ def interview_detail(token):
     messages = _messages_from_rows(get_interview_messages(token))
     compatibility_checks = _rows_to_dicts(get_compatibility_checks(token))
     proctoring_events = _rows_to_dicts(get_proctoring_events(token))
+    compatibility_summary = {
+        "passed": sum(1 for item in compatibility_checks if item.get("status", "").lower() == "passed"),
+        "failed": sum(1 for item in compatibility_checks if item.get("status", "").lower() == "failed"),
+        "pending": sum(1 for item in compatibility_checks if item.get("status", "").lower() not in {"passed", "failed"}),
+    }
     transcript = interview["transcript"]
     transcript_text = ""
     evaluation = {}
@@ -335,6 +824,7 @@ def interview_detail(token):
         interview=interview,
         messages=messages,
         compatibility_checks=compatibility_checks,
+        compatibility_summary=compatibility_summary,
         proctoring_events=proctoring_events,
         transcript_text=transcript_text,
         evaluation=evaluation,
@@ -390,6 +880,7 @@ def interview_event(token):
 @app.route("/interview")
 def interview_room():
     token = request.args.get("token")
+    mode = (request.args.get("mode") or "compat").strip().lower()
     if not token:
         return "Missing token", 400
 
@@ -399,14 +890,47 @@ def interview_room():
 
     now = datetime.now()
     interview_time = datetime.strptime(interview["interview_time"], "%Y-%m-%dT%H:%M")
-    slot_start = interview_time - timedelta(minutes=5)
     slot_end = interview_time + timedelta(minutes=30)
+    is_waiting = now < interview_time
+    seconds_until_start = max(0, int((interview_time - now).total_seconds()))
 
-    if now < slot_start:
+    if now > slot_end:
         return (
-            f"<h1>Too early!</h1><p>Your interview starts at {interview['interview_time']}. Please return then.</p>",
+            f"<h1>Interview Expired</h1><p>The interview slot for {interview['interview_time']} has expired.</p>",
             403,
         )
+
+    show_waiting = mode != "start" or now < interview_time
+    show_interview = mode == "start" and now >= interview_time
+
+    return render_template(
+        "interview.html",
+        name=interview["candidate_name"],
+        token=token,
+        interview_time=interview["interview_time"],
+        is_waiting=is_waiting,
+        seconds_until_start=seconds_until_start,
+        entry_mode=mode,
+        show_waiting=show_waiting,
+        show_interview=show_interview,
+    )
+
+
+@app.route("/system-check")
+def system_check():
+    token = request.args.get("token")
+    if not token:
+        return "Missing token", 400
+
+    interview = get_interview_by_token(token)
+    if not interview:
+        return "Interview not found", 404
+
+    now = datetime.now()
+    interview_time = datetime.strptime(interview["interview_time"], "%Y-%m-%dT%H:%M")
+    slot_end = interview_time + timedelta(minutes=30)
+    seconds_until_start = max(0, int((interview_time - now).total_seconds()))
+
     if now > slot_end:
         return (
             f"<h1>Interview Expired</h1><p>The interview slot for {interview['interview_time']} has expired.</p>",
@@ -414,10 +938,13 @@ def interview_room():
         )
 
     return render_template(
-        "interview.html",
+        "system_check.html",
         name=interview["candidate_name"],
         token=token,
         interview_time=interview["interview_time"],
+        seconds_until_start=seconds_until_start,
+        waiting_url=url_for("interview_room", token=token),
+        enter_url=url_for("interview_room", token=token, mode="start"),
     )
 
 
@@ -437,7 +964,6 @@ def chat():
     data = request.get_json(silent=True) or {}
     token = data.get("token")
     prompt = (data.get("prompt") or "").strip()
-    context = data.get("context", [])
     elapsed_minutes = float(data.get("elapsed_minutes", 0) or 0)
 
     interview = get_interview_by_token(token) if token else None
@@ -464,26 +990,16 @@ def chat():
         f"{timing_instruction} "
         "The candidate just said: "
     )
-    full_prompt = (
-        f"{system_instruction}\"{prompt}\"\n\n"
-        "Respond with the next question or conclude if appropriate."
-    )
+    history = _groq_history_from_rows(get_interview_messages(token))
+    messages = [{"role": "system", "content": system_instruction}]
+    messages.extend(history)
 
     try:
-        response = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": full_prompt,
-                "stream": False,
-                "context": context,
-            },
-            timeout=30,
+        ai_response = _groq_chat(
+            messages,
+            temperature=0.7,
+            max_tokens=256,
         )
-        response.raise_for_status()
-        payload = response.json()
-        ai_response = (payload.get("response") or "").strip()
-        response_context = payload.get("context", context)
         if not ai_response:
             ai_response = "Please continue and share a specific example from your recent experience."
     except Exception:
@@ -491,7 +1007,6 @@ def chat():
             "I am having trouble reaching the AI engine right now, but we can still continue. "
             "Please tell me more about your recent experience and the tools you used."
         )
-        response_context = context
 
     save_interview_message(token, "ai", ai_response)
     update_interview_started(token)
@@ -499,7 +1014,7 @@ def chat():
     return jsonify(
         {
             "response": ai_response,
-            "context": response_context,
+            "context": history,
         }
     )
 
@@ -545,4 +1060,6 @@ def interview_complete(token):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    port = int(os.getenv("PORT", "8000"))
+    debug = os.getenv("FLASK_DEBUG", "1").strip().lower() in {"1", "true", "yes", "on"}
+    app.run(host="0.0.0.0", port=port, debug=debug)
